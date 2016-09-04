@@ -64,7 +64,7 @@ def diff_common(es_left, left_index, es_right, right_index, common, quiet):
         left = make_ordered(es_left.get(index=left_index, id=es_ids[0])['_source'])
         right = make_ordered(es_right.get(index=right_index, id=es_ids[1])['_source'])
         if left != right:
-            print('entries for key {} differ'.format(key_))
+            print('entries for key {0} differ'.format(key_))
             if not quiet:
                 leftj = json.dumps(left, indent=2)
                 rightj = json.dumps(right, indent=2)
@@ -129,8 +129,8 @@ if __name__ == "__main__":
     argparser = argparse.ArgumentParser(description='elasticdiff')
     argparser.add_argument('left_index_url')
     argparser.add_argument('right_index_url')
-    argparser.add_argument('type')
-    argparser.add_argument('id_key')
+    argparser.add_argument('-t', '--type')
+    argparser.add_argument('-i', '--id-key')
     argparser.add_argument('-q', '--quiet', action='store_true')
     args = argparser.parse_args()
     main(args.left_index_url, args.right_index_url, args.type, args.id_key, args.quiet)
