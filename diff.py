@@ -1,37 +1,90 @@
 #!/usr/bin/env python3
 #-*- encoding: utf-8 -*-
 
-import argparse
-import elasticsearch
 from urllib import parse as urlparse
+import argparse
+import collections
+import difflib
+import elasticsearch
+import json
+import logging
+
+logger = logging.getLogger(__name__)
 
 
-def diff(es_left, left_index, es_right, right_index):
-    left_page = es_left.search(index=left_index, scroll='2m', search_type='scan', size=1000, body={})
-    left_sid = left_page['_scroll_id']
-    left_scroll_size = left_page['hits']['total']
+def get_id_keys(es, index, type_, id_key):
+    body = {
+        "query": {"type": {"value": type_}},
+        "fields": [id_key, "_id"],
+    }
 
-    left = []
-    while (left_scroll_size > 0):
-        left_page = es_left.scroll(scroll_id=left_sid, scroll='2m')
-        left_sid = left_page['_scroll_id']
-        left_scroll_size = len(left_page['hits']['hits'])
-        left.extend(left_page['hits']['hits'])
+    page = es.search(index=index, scroll='2m', search_type='scan', size=1000, body=body)
+    sid = page['_scroll_id']
+    scroll_size = page['hits']['total']
 
-    right_page = es_right.search(index=right_index, scroll='2m', search_type='scan', size=1000, body={})
-    right_sid = right_page['_scroll_id']
-    right_scroll_size = right_page['hits']['total']
+    results = {}
+    while (scroll_size > 0):
+        page = es.scroll(scroll_id=sid, scroll='2m')
+        sid = page['_scroll_id']
+        scroll_size = len(page['hits']['hits'])
+        results.update({h['fields'][id_key][0]: h['_id'] for h in page['hits']['hits']})
 
-    right = []
-    while (right_scroll_size > 0):
-        right_page = es_right.scroll(scroll_id=right_sid, scroll='2m')
-        right_sid = right_page['_scroll_id']
-        right_scroll_size = len(right_page['hits']['hits'])
-        right.extend(right_page['hits']['hits'])
+    return results
 
-    pass
+def print_only(only, side):
+    for element in only:
+        print('only in {0}: {1}'.format(side, element))
 
-def main(left_index_url, right_index_url):
+def make_ordered(d):
+    def handle(e):
+        if isinstance(e, dict):
+            return collections.OrderedDict(sorted(e.items(), key=lambda t: handle(t[0])))
+        if isinstance(e, (list, tuple)):
+            return [handle(x) for x in e]
+        return e
+    return handle(d)
+
+def diff_common(es_left, left_index, es_right, right_index, common, quiet):
+    diff_entries = 0
+    for key_, es_ids in common.items():
+        left = make_ordered(es_left.get(index=left_index, id=es_ids[0])['_source'])
+        right = make_ordered(es_right.get(index=right_index, id=es_ids[1])['_source'])
+        if left != right:
+            print('entries for key {} differ'.format(key_))
+            if not quiet:
+                leftj = json.dumps(left, indent=2)
+                rightj = json.dumps(right, indent=2)
+                for line in difflib.unified_diff(leftj.splitlines(), rightj.splitlines()):
+                    print(line)
+    return diff_entries
+
+def diff(es_left, left_index, es_right, right_index, type_, id_key, quiet):
+    left = get_id_keys(es_left, left_index, type_, id_key)
+    right = get_id_keys(es_right, right_index, type_, id_key)
+
+    common_keys = set(left.keys()) & set(right.keys())
+    only_left_keys = set(left.keys()) - common_keys
+    only_right_keys = set(right.keys()) - common_keys
+
+    print_only(only_left_keys, 'left')
+    print_only(only_right_keys, 'right')
+
+    common = collections.defaultdict(lambda: [None, None])
+    for k, v in left.items():
+        common[k][0] = v
+    for k, v in right.items():
+        common[k][1] = v
+    common = {k: v for k, v in common.items() if None not in v}
+    entries_differ = diff_common(es_left, left_index, es_right, right_index, common, quiet)
+
+    print('Summary:')
+    print('{} entries only in left index'.format(len(only_left_keys)))
+    print('{} entries only in right index'.format(len(only_right_keys)))
+    print('{} common entries'.format(len(common_keys)))
+    print('  {} of them are the same'.format(len(common_keys) - entries_differ))
+    print('  {} of them differ'.format(entries_differ))
+
+def main(left_index_url, right_index_url, type_, id_key, quiet):
     left_index_url = urlparse.urlparse(left_index_url)
     left_es_url = left_index_url.scheme + '://' +  left_index_url.netloc
     es_left = elasticsearch.Elasticsearch(left_es_url)
@@ -55,12 +108,15 @@ def main(left_index_url, right_index_url):
     if right_index not in right_indices:
         raise RuntimeError('right index does not exist!')
 
-    return diff(es_left, left_index, es_right, right_index)
+    return diff(es_left, left_index, es_right, right_index, type_, id_key, quiet)
 
 
 if __name__ == "__main__":
     argparser = argparse.ArgumentParser(description='elasticdiff')
     argparser.add_argument('left_index_url')
     argparser.add_argument('right_index_url')
+    argparser.add_argument('type')
+    argparser.add_argument('id_key')
+    argparser.add_argument('-q', '--quiet', action='store_true')
     args = argparser.parse_args()
-    main(args.left_index_url, args.right_index_url)
+    main(args.left_index_url, args.right_index_url, args.type, args.id_key, args.quiet)
