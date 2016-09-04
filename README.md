@@ -1,6 +1,8 @@
 # elasticdiff
 Elasticsearch diff between indices
 
+![project logo](https://raw.githubusercontent.com/szborows/elasticdiff/master/elasticdiff.png)
+
 Tested with ES version 2.3.
 
 Example usage:
