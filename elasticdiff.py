@@ -21,14 +21,11 @@ import collections
 import difflib
 import elasticsearch
 import json
-import logging
-
-logger = logging.getLogger(__name__)
 
 
 def get_id_keys(es, index, type_, id_key):
     body = {
-        "query": {"type": {"value": type_}},
+        **({"query": {"type": {"value": type_}}} if type_ is not None else {}),
         "fields": [id_key, "_id"],
     }
 
@@ -65,12 +62,22 @@ def diff_common(es_left, left_index, es_right, right_index, common, quiet):
         right = make_ordered(es_right.get(index=right_index, id=es_ids[1])['_source'])
         if left != right:
             print('entries for key {0} differ'.format(key_))
+            diff_entries += 1
             if not quiet:
                 leftj = json.dumps(left, indent=2)
                 rightj = json.dumps(right, indent=2)
                 for line in difflib.unified_diff(leftj.splitlines(), rightj.splitlines()):
                     print(line)
     return diff_entries
+
+def print_summary(only_left, only_right, common, common_differ):
+    print('Summary:')
+    print('{} entries only in left index'.format(only_left))
+    print('{} entries only in right index'.format(only_right))
+    print('{} common entries'.format(common))
+    print('  {} of them are the same'.format(common - common_differ))
+    print('  {} of them differ'.format(common_differ))
+
 
 def diff(es_left, left_index, es_right, right_index, type_, id_key, quiet):
     left = get_id_keys(es_left, left_index, type_, id_key)
@@ -91,12 +98,7 @@ def diff(es_left, left_index, es_right, right_index, type_, id_key, quiet):
     common = {k: v for k, v in common.items() if None not in v}
     entries_differ = diff_common(es_left, left_index, es_right, right_index, common, quiet)
 
-    print('Summary:')
-    print('{} entries only in left index'.format(len(only_left_keys)))
-    print('{} entries only in right index'.format(len(only_right_keys)))
-    print('{} common entries'.format(len(common_keys)))
-    print('  {} of them are the same'.format(len(common_keys) - entries_differ))
-    print('  {} of them differ'.format(entries_differ))
+    print_summary(len(only_left_keys), len(only_right_keys), len(common_keys), entries_differ)
 
 def main(left_index_url, right_index_url, type_, id_key, quiet):
     left_index_url = urlparse.urlparse(left_index_url)
